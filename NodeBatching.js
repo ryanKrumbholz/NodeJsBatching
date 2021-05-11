@@ -1,10 +1,12 @@
 require('dotenv').config();
+const {backOff} = require('exponential-backoff');
 const {google} = require('googleapis');
 const http = require('http');
 const url = require('url');
 const opn = require('open');
 const destroyer = require('server-destroy');
 const axios = require('axios');
+const { v4: uuidv4 } = require('uuid');
 
 const oauth2Client = new google.auth.OAuth2(
     process.env.CLIENT_ID,
@@ -19,6 +21,7 @@ const scopes = [
   "https://www.googleapis.com/auth/dfareporting",
   "https://www.googleapis.com/auth/dfatrafficking",
   "https://www.googleapis.com/auth/analytics",
+  "https://www.googleapis.com/auth/analytics.manage.users",
   "https://www.googleapis.com/auth/tagmanager",
   "https://www.googleapis.com/auth/spreadsheets",
   "https://www.googleapis.com/auth/drive",
@@ -51,7 +54,6 @@ function auth() {
                 server.destroy();
                 const {tokens} = await oauth2Client.getToken(qs.get('code'));
                 oauth2Client.credentials = tokens; // eslint-disable-line require-atomic-updates
-                console.log(oauth2Client)
                 resolve(oauth2Client);
             }
             } catch (e) {
@@ -66,34 +68,48 @@ function auth() {
     });
 }
 
-function constructBatchRequest(requests) {
+function constructBatchRequest(requestType, path, requests, uid) {
     let batchContents = [];
     let batchId;
     let contentLength;
-    let jsonObject;
-    let path;
-    for(let i = 0; i < requests.length; i++) {
-        chunkContents.push(`--batch_${batchId}`);
+
+    for(request of requests) {
+        let newPath = path;
+
+        switch (requestType) {
+            case 'POST':
+                newPath = newPath.replace('accountId', request.accountId);
+                newPath = newPath.replace('webPropertyId', request.webPropertyId);
+                break;
+            case 'PUT':
+                newPath = newPath.replace('accountId', request.accountId);
+                newPath = newPath.replace('webPropertyId', request.webPropertyId);
+                newPath = newPath.replace('linkId', request.linkId);
+                break;
+        }
+
+        batchContents.push(`--batch_${uid}`);
         batchContents.push('Content-Type: application/http');
-        batchContents.push(`Content-ID: ${contentId}`);
-        batchContents.push(`Content-Transfer-Encoding: ${encoding}`);
+        batchContents.push(`Content-ID:`);
+        batchContents.push('Content-Transfer-Encoding: binary');
         batchContents.push('');
-        batchContents.push('');
-        batchContents.push(`POST ${path}`);
+        batchContents.push(`${requestType} ${newPath}`);
         batchContents.push('Content-Type: application/json');
-        batchContents.push(`Content-Length: ${contentLength}`);
         batchContents.push('');
         batchContents.push('');
-        batchContents.push(jsonObject);
+        batchContents.push(JSON.stringify(request));
         batchContents.push('');
     }
+
+    batchContents.push(`--batch_${uid}--`);
 
     return batchContents.join('\r\n');
 }
 
-function batchRequest(requests, token) {
+function batchRequest(requestType, path, requests, token) {
     let limit = 1000;
     let batchChunks = [];
+    let uid = uuidv4();
 
     // If amount of requests is greater than the limit (1000), the maximum amount youn can send in a single batch request.
     // Splits requests into "chunks" to send multiple batch requests.
@@ -111,29 +127,92 @@ function batchRequest(requests, token) {
     }
 
     // Constructs request body from each chunk and sends batch request.
-    for(chunk in batchChunks) {        
-        let reqBody = constructBatchRequest(chunk);
+    for(chunk of batchChunks) {      
+        let reqBody = constructBatchRequest(requestType, path, chunk, uid);
         const headers = {
             headers: {
-                'Content-Type': 'multipart/mixed',
-                'Authorization': `Bearer ${token.access_token}`
+                'Content-Type': `multipart/mixed; boundary=batch_${uid}`,
+                'Authorization': `Bearer ${token}`
             }
         }
 
-        try {
-            axios.post('/batch/analytics/v3', reqBody, headers).then(res => {
-                console.log(res)
-            })
-        } catch(err) {
-            console.log(err);
-        }
+        axios.post('https://www.googleapis.com/batch/analytics/v3', reqBody, headers)
+        .then(res => {
+            if(res.statusText === 'OK') {
+                console.log('Chunk successfully submitted.')
+            }
+        })
+        .catch(err => {
+            console.log(err.response);
+        });
     }    
 }
 
 async function main() {    
     auth()
         .then(async (token) => {
-            batchRequest(requests, token);
+            let addUser = [
+                {
+                    'accountId': '66031361',
+                    'webPropertyId': 'UA-66031361-19',
+
+                    'permissions': {
+                    'local': [
+                        "READ_AND_ANALYZE"
+                    ]
+                    },
+                    'userRef': {
+                    'email': 'aran.murphy@infotrustllc.com'
+                    }
+                }
+            ]
+
+            let singleUser = [
+                {
+                    'accountId': '66031361',
+                    'webPropertyId': 'UA-66031361-19',
+                    'linkId': 'UA-66031361-19:113110980737183910321',
+                    'permissions': {
+                        'local': ['READ_AND_ANALYZE', 'EDIT']
+                    }
+                }
+            ]
+
+            let multipleUsers = [
+                {
+                    'accountId': '66031361',
+                    'webPropertyId': 'UA-66031361-19',
+                    'linkId': 'UA-66031361-19:102820693263630713359',
+                    'permissions': {
+                        'local': ['READ_AND_ANALYZE']
+                    }
+                },
+                {
+                    'accountId': '66031361',
+                    'webPropertyId': 'UA-66031361-19',
+                    'linkId': 'UA-66031361-19:102820693263630713359',
+                    'permissions': {
+                        'local': ['READ_AND_ANALYZE']
+                    }
+                },
+                {
+                    'accountId': '66031361',
+                    'webPropertyId': 'UA-66031361-19',
+                    'linkId': 'UA-66031361-19:102820693263630713359',
+                    'permissions': {
+                        'local': ['READ_AND_ANALYZE']
+                    }
+                }
+            ]
+
+            // Test single user insert
+            // batchRequest('POST', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks', addUser, token.credentials.access_token); 
+            
+            // Test single user update
+            // batchRequest('PUT', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks/linkId', singleUser, token.credentials.access_token); 
+
+            // // Test multiple users update
+            // batchRequest('PUT', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks/linkId', multipleUsers, token.credentials.access_token);
         })
 }
 
