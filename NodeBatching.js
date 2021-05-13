@@ -68,6 +68,27 @@ function auth() {
     });
 }
 
+function parseBatch(batchapiresponse){
+  var boundary= '--batch_';
+  var items = [];
+  var responseLines = batchapiresponse.data.split(boundary);
+  responseLines.splice(0,1);
+  responseLines.pop();
+  for(let index=0;index<responseLines.length; index++){
+      let value = responseLines[index];
+      var startJson = value.indexOf('{');
+      var endJson = value.lastIndexOf('}');
+      if (startJson < 0 || endJson < 0) 
+      {
+        return;               
+      }
+      var responseJson = value.substr(startJson, (endJson - startJson) + 1);
+      responseJson=JSON.parse(responseJson);  
+      items.push(responseJson);
+  }
+  return items;
+}
+
 function constructBatchRequest(requestType, path, requests, uid) {
     let batchContents = [];
     let batchId;
@@ -106,14 +127,16 @@ function constructBatchRequest(requestType, path, requests, uid) {
     return batchContents.join('\r\n');
 }
 
-function batchRequest(requestType, path, requests, token) {
+async function batchRequest(requestType, path, requests, token) {
     let limit = 1000;
     let batchChunks = [];
     let uid = uuidv4();
-
+    let results = [];
     // If amount of requests is greater than the limit (1000), the maximum amount youn can send in a single batch request.
     // Splits requests into "chunks" to send multiple batch requests.
-    if(requests.length > limit) {
+    if(requests.length == 0){
+      return [];
+    }else if(requests.length > limit) {
         let chunk = [];
         for(let i = 0; i < requests.length; i++) {
             if((i + 1) % limit !== 0) {
@@ -122,98 +145,93 @@ function batchRequest(requestType, path, requests, token) {
             }
             chunk.push(requests[i]);
         }
-    } else {
+    } else{
         batchChunks.push(requests)
     }
-
     // Constructs request body from each chunk and sends batch request.
     for(chunk of batchChunks) {      
         let reqBody = constructBatchRequest(requestType, path, chunk, uid);
+        if(!token){
+          token = gaClient?.context?._options?.auth?.credentials?.access_token;
+        }
         const headers = {
             headers: {
                 'Content-Type': `multipart/mixed; boundary=batch_${uid}`,
                 'Authorization': `Bearer ${token}`
             }
         }
+        let result = parseBatch(await axios.post('https://www.googleapis.com/batch/analytics/v3', reqBody, headers));
+        results.push(...result);
+    }
+    return results;
+  }
 
-        axios.post('https://www.googleapis.com/batch/analytics/v3', reqBody, headers)
-        .then(res => {
-            if(res.statusText === 'OK') {
-                console.log('Chunk successfully submitted.')
-            }
-        })
-        .catch(err => {
-            console.log(err.response);
-        });
-    }    
-}
+// async function main() {    
+//     auth()
+//         .then(async (token) => {
+//             let addUser = [
+//                 {
+//                     'accountId': '66031361',
+//                     'webPropertyId': 'UA-66031361-19',
 
-async function main() {    
-    auth()
-        .then(async (token) => {
-            let addUser = [
-                {
-                    'accountId': '66031361',
-                    'webPropertyId': 'UA-66031361-19',
+//                     'permissions': {
+//                     'local': [
+//                         "READ_AND_ANALYZE"
+//                     ]
+//                     },
+//                     'userRef': {
+//                     'email': 'aran.murphy@infotrustllc.com'
+//                     }
+//                 }
+//             ]
 
-                    'permissions': {
-                    'local': [
-                        "READ_AND_ANALYZE"
-                    ]
-                    },
-                    'userRef': {
-                    'email': 'aran.murphy@infotrustllc.com'
-                    }
-                }
-            ]
+//             let singleUser = [
+//                 {
+//                     'accountId': '66031361',
+//                     'webPropertyId': 'UA-66031361-19',
+//                     'linkId': 'UA-66031361-19:113110980737183910321',
+//                     'permissions': {
+//                         'local': ['READ_AND_ANALYZE', 'EDIT']
+//                     }
+//                 }
+//             ]
 
-            let singleUser = [
-                {
-                    'accountId': '66031361',
-                    'webPropertyId': 'UA-66031361-19',
-                    'linkId': 'UA-66031361-19:113110980737183910321',
-                    'permissions': {
-                        'local': ['READ_AND_ANALYZE', 'EDIT']
-                    }
-                }
-            ]
+//             let multipleUsers = [
+//                 {
+//                     'accountId': '66031361',
+//                     'webPropertyId': 'UA-66031361-19',
+//                     'linkId': 'UA-66031361-19:102820693263630713359',
+//                     'permissions': {
+//                         'local': ['READ_AND_ANALYZE']
+//                     }
+//                 },
+//                 {
+//                     'accountId': '66031361',
+//                     'webPropertyId': 'UA-66031361-19',
+//                     'linkId': 'UA-66031361-19:102820693263630713359',
+//                     'permissions': {
+//                         'local': ['READ_AND_ANALYZE']
+//                     }
+//                 },
+//                 {
+//                     'accountId': '66031361',
+//                     'webPropertyId': 'UA-66031361-19',
+//                     'linkId': 'UA-66031361-19:102820693263630713359',
+//                     'permissions': {
+//                         'local': ['READ_AND_ANALYZE']
+//                     }
+//                 }
+//             ]
 
-            let multipleUsers = [
-                {
-                    'accountId': '66031361',
-                    'webPropertyId': 'UA-66031361-19',
-                    'linkId': 'UA-66031361-19:102820693263630713359',
-                    'permissions': {
-                        'local': ['READ_AND_ANALYZE']
-                    }
-                },
-                {
-                    'accountId': '66031361',
-                    'webPropertyId': 'UA-66031361-19',
-                    'linkId': 'UA-66031361-19:102820693263630713359',
-                    'permissions': {
-                        'local': ['READ_AND_ANALYZE']
-                    }
-                },
-                {
-                    'accountId': '66031361',
-                    'webPropertyId': 'UA-66031361-19',
-                    'linkId': 'UA-66031361-19:102820693263630713359',
-                    'permissions': {
-                        'local': ['READ_AND_ANALYZE']
-                    }
-                }
-            ]
-
-            // Test single user insert
-            // batchRequest('POST', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks', addUser, token.credentials.access_token); 
+//             // Test single user insert
+//             // batchRequest('POST', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks', addUser, token.credentials.access_token); 
             
-            // Test single user update
-            // batchRequest('PUT', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks/linkId', singleUser, token.credentials.access_token); 
+//             // Test single user update
+//             // batchRequest('PUT', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks/linkId', singleUser, token.credentials.access_token); 
 
-            // // Test multiple users update
-            // batchRequest('PUT', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks/linkId', multipleUsers, token.credentials.access_token);
-        })
-}
+//             // Test multiple users update
+//             // console.log(await batchRequest('PUT', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks/linkId', multipleUsers, token.credentials.access_token));
+//         })
+// }
 
-main();
+// main();
