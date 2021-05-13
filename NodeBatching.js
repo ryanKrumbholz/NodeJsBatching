@@ -160,7 +160,8 @@ async function batchRequest(requestType, path, requests, token) {
                 'Authorization': `Bearer ${token}`
             }
         }
-        let result = parseBatch(await axios.post('https://www.googleapis.com/batch/analytics/v3', reqBody, headers));
+        let batch = await backOff(() =>  axios.post('https://www.googleapis.com/batch/analytics/v3', reqBody, headers));
+        let result = parseBatch(batch);
         results.push(...result);
     }
     return results;
@@ -229,8 +230,8 @@ async function batchRequest(requestType, path, requests, token) {
 //             // Test single user update
 //             // batchRequest('PUT', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks/linkId', singleUser, token.credentials.access_token); 
 
-//             // Test multiple users update
-//             // console.log(await batchRequest('PUT', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks/linkId', multipleUsers, token.credentials.access_token));
+            // Test multiple users update
+            // console.log(await batchRequest('PUT', 'https://www.googleapis.com/analytics/v3/management/accounts/accountId/webproperties/webPropertyId/entityUserLinks/linkId', multipleUsers, token.credentials.access_token));
 //         })
 // }
 
